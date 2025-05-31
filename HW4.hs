@@ -203,7 +203,13 @@ instance Jsonable a => Jsonable (Tree a) where
 
 -- Section 3: Num
 -- Subsection: Num instances
-instance Num Bool
+instance Num Bool where
+  fromInteger x   = x `mod` 2 == 1
+  (+) = (/=)
+  (*) = (&&)
+  negate = id
+  abs = id
+  signum = id  
 
 data Expression a
   = Iden String
@@ -215,12 +221,25 @@ data Expression a
   | Signum (Expression a)
   deriving (Eq, Show)
   
-instance Num a => Num (Expression a)
+instance Num a => Num (Expression a) where
+  negate = Mult (Lit (-1))
+  (+) = Plus
+  (*) = Mult
+  signum x = Signum x
+  abs x = Mult x (Signum x)
+  fromInteger n = Lit (fromInteger n)
 
 newtype MatrixSum a = MatrixSum {getMS :: Matrix a} deriving (Show, Eq)
 newtype MatrixMult a = MatrixMult {getMM :: Matrix a} deriving (Show, Eq)
-instance Num a => Semigroup (MatrixSum a)
-instance Num a => Semigroup (MatrixMult a)
+instance Num a => Semigroup (MatrixSum a) where 
+  (<>) x y =
+    let
+      m1 = getMS x
+      m2 = getMS y
+    in 
+      MatrixSum (zipWith (zipWith (+)) m1 m2)
+
+instance Num a => Semigroup (MatrixMult a) where
 
 newtype SparseMatrixSum a = SparseMatrixSum {getSMS :: SparseMatrix a} deriving (Show, Eq)
 newtype SparseMatrixMult a = SparseMatrixMult {getSMM :: SparseMatrix a} deriving (Show, Eq)
