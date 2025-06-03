@@ -234,12 +234,8 @@ instance Num a => Num (Expression a) where
 newtype MatrixSum a = MatrixSum {getMS :: Matrix a} deriving (Show, Eq)
 newtype MatrixMult a = MatrixMult {getMM :: Matrix a} deriving (Show, Eq)
 instance Num a => Semigroup (MatrixSum a) where 
-  (<>) x y =
-    let
-      m1 = getMS x
-      m2 = getMS y
-    in 
-      MatrixSum (zipWith (zipWith (+)) m1 m2)
+  (<>) (MatrixSum (Matrix m1)) (MatrixSum (Matrix m2)) =
+        MatrixSum (Matrix (zipWith (zipWith (+)) m1 m2))
 
 
 instance Num a => Semigroup (MatrixMult a) where
@@ -280,22 +276,28 @@ instance (Num a, Eq a) => Semigroup (SparseMatrixMult a) where
 
 -- Subsection: General functions
 evalPoly :: Num a => [a] -> a -> a
-evalPoly coeffs x = sum $ zipWith (\a i -> a * (x ^ i)) coeffs [0..]
+evalPoly coeffs x = go coeffs (0 :: Integer)
+  where
+    go []     _ = 0
+    go (c:cs) k = c * x ^ k + go cs (k + 1)
 
 type Length = Int
 type I = Int
 type J = Int
+
 pathsOfLengthK :: Length -> I -> J -> Matrix Int -> Int
-pathsOfLengthK k i j m =
-  let Matrix m' = getMM (foldr1 (<>) (replicate k (MatrixMult m)))
-  in (m' !! i) !! j
+pathsOfLengthK 0 i j (Matrix m) = (m !! i) !! j           --- קטע הדרך 0
+pathsOfLengthK k i j (Matrix m) =
+  sum [ (m !! i !! t) * pathsOfLengthK (k-1) t j (Matrix m)
+      | t <- [0 .. length m - 1] ]
 
 
 hasPath :: I -> J -> Matrix Int -> Bool
-hasPath i j (Matrix rows) =
-  let n = length rows
-      powers = scanl1 (<>) (replicate (n - 1) (MatrixMult (Matrix rows)))
-  in any (\(Matrix m) -> (m !! i) !! j > 0) (map getMM powers)
+hasPath i j mat@(Matrix rows) =
+  foldr (||) False [ pathsOfLengthK k i j mat > 0
+                   | k <- [1 .. length rows - 1]
+                   ]
+
 
 
 -- Section 4: Simplify expressions
@@ -354,5 +356,6 @@ simplify expr = case expr of
       _ -> Signum s
 
 
-      
+
 inlineExpressions :: [(Expression Integer, String)] -> [(Expression Integer, String)]
+inlineExpressions = undefined
