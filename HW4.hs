@@ -210,6 +210,7 @@ instance Num Bool where
   negate = id
   abs = id
   signum = id  
+  x - y = x /= y   
 
 data Expression a
   = Iden String
@@ -224,6 +225,7 @@ data Expression a
 instance Num a => Num (Expression a) where
   negate = Mult (Lit (-1))
   (+) = Plus
+  (-) = Minus
   (*) = Mult
   signum x = Signum x
   abs x = Mult x (Signum x)
@@ -239,25 +241,118 @@ instance Num a => Semigroup (MatrixSum a) where
     in 
       MatrixSum (zipWith (zipWith (+)) m1 m2)
 
-instance Num a => Semigroup (MatrixMult a) where
 
+instance Num a => Semigroup (MatrixMult a) where
+  (<>) (MatrixMult (Matrix a)) (MatrixMult (Matrix b)) =
+    let
+      bT = transpose b  -- Transpose of b for easy column access
+      result = [ [ sum $ zipWith (*) row col | col <- bT ] | row <- a ]
+    in
+      MatrixMult (Matrix result)
+
+      
 newtype SparseMatrixSum a = SparseMatrixSum {getSMS :: SparseMatrix a} deriving (Show, Eq)
 newtype SparseMatrixMult a = SparseMatrixMult {getSMM :: SparseMatrix a} deriving (Show, Eq)
 
 -- These have Eq constraint so you can filter out zero values, which should not appear in sparse matrices.
-instance (Num a, Eq a) => Semigroup (SparseMatrixSum a)
-instance (Num a, Eq a) => Semigroup (SparseMatrixMult a)
+
+instance (Num a, Eq a) => Semigroup (SparseMatrixSum a) where
+  (<>) (SparseMatrixSum (SparseMatrix r1 c1 e1)) (SparseMatrixSum (SparseMatrix r2 c2 e2))
+    | r1 /= r2 || c1 /= c2 = error "SparseMatrixSum: dimension mismatch"
+    | otherwise = SparseMatrixSum (SparseMatrix r1 c1 entriesSum)
+    where
+      merged = Map.unionWith (+) e1 e2
+      entriesSum = Map.filter (/= 0) merged
+
+instance (Num a, Eq a) => Semigroup (SparseMatrixMult a) where
+  (<>) (SparseMatrixMult (SparseMatrix r1 c1 e1)) (SparseMatrixMult (SparseMatrix r2 c2 e2))
+    | c1 /= r2 = error "SparseMatrixMult: dimension mismatch"
+    | otherwise = SparseMatrixMult (SparseMatrix r1 c2 result)
+    where
+      -- for each position (i, k) from e1 and (k, j) from e2:
+      candidates =
+        [ ((i, j), v1 * v2)
+        | ((i, k1), v1) <- Map.toList e1
+        , ((k2, j), v2) <- Map.toList e2
+        , k1 == k2
+        ]
+      result = Map.filter (/= 0) $ Map.fromListWith (+) candidates
 
 -- Subsection: General functions
 evalPoly :: Num a => [a] -> a -> a
+evalPoly coeffs x = sum $ zipWith (\a i -> a * (x ^ i)) coeffs [0..]
 
 type Length = Int
 type I = Int
 type J = Int
 pathsOfLengthK :: Length -> I -> J -> Matrix Int -> Int
+pathsOfLengthK k i j m =
+  let Matrix m' = getMM (foldr1 (<>) (replicate k (MatrixMult m)))
+  in (m' !! i) !! j
+
+
 hasPath :: I -> J -> Matrix Int -> Bool
+hasPath i j (Matrix rows) =
+  let n = length rows
+      powers = scanl1 (<>) (replicate (n - 1) (MatrixMult (Matrix rows)))
+  in any (\(Matrix m) -> (m !! i) !! j > 0) (map getMM powers)
+
 
 -- Section 4: Simplify expressions
 -- We constrain the type to Integral so we can use integer division
 simplify :: Expression Integer -> Expression Integer
+simplify expr = case expr of
+  -- בסיסיים
+  Lit n -> Lit n
+  Iden x -> Iden x
+
+  -- חיבור
+  Plus e1 e2 ->
+    let s1 = simplify e1
+        s2 = simplify e2
+    in case (s1, s2) of
+      (Lit 0, e) -> e
+      (e, Lit 0) -> e
+      (Lit n1, Lit n2) -> Lit (n1 + n2)
+      _ -> Plus s1 s2
+
+  -- חיסור
+  Minus e1 e2 ->
+    let s1 = simplify e1
+        s2 = simplify e2
+    in case (s1, s2) of
+      (e, Lit 0) -> e
+      (Lit n1, Lit n2) -> Lit (n1 - n2)
+      _ -> Minus s1 s2
+
+  -- כפל
+  Mult e1 e2 ->
+    let s1 = simplify e1
+        s2 = simplify e2
+    in case (s1, s2) of
+      (Lit 1, e) -> e
+      (e, Lit 1) -> e
+      (Lit n1, Lit n2) -> Lit (n1 * n2)
+      _ -> Mult s1 s2
+
+  -- חילוק
+  Div e1 e2 ->
+    let s1 = simplify e1
+        s2 = simplify e2
+    in case (s1, s2) of
+      (_, Lit 1) -> s1
+      (Lit n1, Lit n2) | n2 /= 0 -> Lit (n1 `div` n2)
+      _ -> Div s1 s2
+
+  -- Signum
+  Signum e ->
+    let s = simplify e
+    in case s of
+      Lit n -> Lit (signum n)
+      Mult e1 e2 -> simplify (Mult (Signum e1) (Signum e2))
+      Div e1 e2 -> simplify (Div (Signum e1) (Signum e2))
+      _ -> Signum s
+
+
+      
 inlineExpressions :: [(Expression Integer, String)] -> [(Expression Integer, String)]
